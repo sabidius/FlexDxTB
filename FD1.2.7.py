@@ -1,5 +1,6 @@
 #############################################################
-# "TB Diagnostic Selection" Model
+# FlexDxTB model.
+# Based on a TB diagnostic selection model
 # David Dowdy, Jason Andrews, Peter Dodd, Robert Gilman
 # rewritten version, wrapped in GUI
 #############################################################
@@ -125,7 +126,6 @@ c2 = drug3_cost * np.ones((2,2,3,2))                  # cost of 2nd line tx
 defvfail_s = 6./7.       # proportion of inappropriate tx's that are default (vs. failure), DS-TB
 defvfail_i = 2./3.       # proportion of inapp tx's that are default, INHr
 defvfail_m = 11./25.     # proportion of inapp tx's that are default, MDR
-#dur_fail = 6.            # number of months until failing cases are re-evaluated
 omega = defvfail_s * np.ones((2,2,3,2))
 omega[:,:,1,:] = defvfail_i; omega[:,:,2,:] = defvfail_m
 pdefcure = .5                            # proportion defaulters (from I) cured
@@ -293,14 +293,7 @@ def setparameters( scenario ):
             DR[:,:,d,:] = 1- SPdr[:,:,d,:] if d!=2 else SNdr[:,:,d,:]
         Ep = emp_tx * np.ones((2,2,3,2))              # empirical tx probability 
         p1 = (1 - LTFU)*SNtb*(1 - DR) + Ep*(LTFU + (1 - LTFU)*(1 - SNtb)) # prob 1st line tx -  needs attention in setpar's
-        p2 = (1 - LTFU)*SNtb*DR #+ Ep*(LTFU + (1-LTFU)*(1 - SNtb))   # prob 2nd line tx
-
-        # commented out assumes that H-monoresistance has no effect on Rx success
-        # if scenario == 3:                 # NB the MODS scenario has a different p1suc!
-        #     p1sucL[:,0,1,0] = (fail_i1-fail_i2)*(1-ltfu_cx)*cx_sens*cxr_spec*cxi_sens
-        #     p1sucL[:,0,1,0] /= p1[:,0,1,0]     
-        #     p1sucL[:,0,1,0] += (1-fail_i1)
-        
+        p2 = (1 - LTFU)*SNtb*DR
         pe = Ep*(LTFU + (1 - LTFU)*(1 - SNtb))   # empiric 1st line tx probability
         pe[p1>0] /= p1[p1>0]; pe[p1==0]=0        # conditioning on 1st line tx
         d1 = pe*Te + (1 - pe)*Ttb             # delay to 1st line
@@ -411,18 +404,15 @@ def Xflow(X,t, beta,theta,phim, sigma, rho, kappa, kappanr, SH, SM, HM, spec):
     dA[:,1,:,:] += (omega*deltaf*(1-pdefcure)*I).sum(1)   # defaulted not cured into previously treated
     dA[:,:,0,:] -= (SH+SM)* A[:,:,0,:] # S -> DR emergence
     dA[:,:,1,:] -= HM * A[:,:,1,:]     # H -> M DR emergence
-    # dA += deltaf * omega * I       # arrivals from ineffective treatment
     for h in range(2):                 # progression from early
         for i in range(2):
             dA[h,:,:,i] += deltae[h] * ( psi[h] if i==1 else 1-psi[h] ) * E[h,:,:]    
     # change for P - eqn 5
     dP = sigma * A  - (mubl + rho) * P   # dx rate less background mortality & cure rates
-     # + deltaf*(1-omega)*I
     dP[0] -= theta * P[0]               # HIV incidence
     dP[1] += theta * P[0] - (muh+muth) * P[1] # HIV incidence less mortality, HIV+
     for i in range(2):
         dP[0,:,:,i] -= (mut[i]+nu[i]) * P[0,:,:,i] # mortality & self-cure, HIV-
-    # change for I - eqn 6
     dI = kappanr * A - (mubl + deltaf) * I  # arrival on inappropriate rx less background death & tx durn
     dI[:,1,:,:] += ((1-omega)*deltaf*I).sum(1)   # arrival into previously treated from failure
     dI[0] -= theta * I[0]       # HIV incidence
@@ -441,10 +431,9 @@ def evalepi(X,beta,theta,phim):
     Lvuln = L.copy()
     Lvuln[0] *= (1-v)
     lam = foi(X,beta,phim)
-    #phi = np.array([1.0,1-.25*(1-phim),phim]) # relative fitness strains
     N = X.sum()
     inc = np.zeros((2,2,3))     # hpd
-    # hang on - this probably includes some flows which are not ->E todox
+    # hang on - does this include some flows which are not ->E todo?
     for h in range(2):
         inc[h] += eps[h] * L[h]
         for d in range(3):
@@ -463,13 +452,11 @@ def evalepi(X,beta,theta,phim):
     return incnew, incretx, incinhnew, incinhretx, incmdrnew, incmdrretx, inctbhiv, TBmort, TBprev, HIVprev
 
 # extract relevant costs
-def evalcost(X, sigma, kappa, costtxS, costtxU, cdx, ndxtx):                # DD's incprevmort
-    # Fifth indent is inappropriate treatment that is made empirically - why different?
-    # Sixth indent is failure: inappropriate treatment followed by appropriate treatment -- why do we need a separate costing
+def evalcost(X, sigma, kappa, costtxS, costtxU, cdx, ndxtx): 
     U,L,E,A,P,I = parseX(X)
-    cost = (sigma * A * costtxS).sum() # successful tx (double counts?)
-    cost += (kappa * A * costtxU).sum() # unsuccessful tx (double counts?)
-    cost += (dxrate * A * cdx).sum() # dx costs - empiric discount?
+    cost = (sigma * A * costtxS).sum() # successful tx
+    cost += (kappa * A * costtxU).sum() # unsuccessful tx
+    cost += (dxrate * A * cdx).sum() # dx costs
     for h in range(2):          
         for p in range(2):
             cost += tau0 * ndxtx[h,p] * ( U[h,p] + L[h,p,:].sum() ) # 
@@ -592,7 +579,6 @@ def getfit( target_incL, target_hivL, target_mdrL, sigma, rho, kappa, kappanr, S
             return targz[0]+targz[1] - target_incL
 
         # solve
-        # betaL = fsolve( err, betaL )
         betaL = brentq( err, 0, betaL )
         # get y0
         yL = odeint(func=Xflow,y0=y0L,t=tL,args = (betaL,thetaL,phimL,sigma, rho, kappa, kappanr, SH, SM, HM, spec))
@@ -604,16 +590,16 @@ def getfit( target_incL, target_hivL, target_mdrL, sigma, rho, kappa, kappanr, S
     return betaL, thetaL, phimL, y0L # beta, theta, phi, y0
 
 ###########################################################
-# TESTING
+# TESTING - normally commented out
 ###########################################################
 
-from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 
-target_inc = 698.#50.#1*200.0
-target_hiv = 5.781#1*0.83 
-target_mdr = 0.006#.05*3.7/100
+# target_inc = 698.#50.#1*200.0
+# target_hiv = 5.781#1*0.83 
+# target_mdr = 0.006#.05*3.7/100
 
-
+# work hard to reproduce an error
 # while phim < 1:
 #     target_inc = 500*np.random.rand() + 51
 #     target_hiv = 10*np.random.rand()
@@ -623,26 +609,26 @@ target_mdr = 0.006#.05*3.7/100
 #     print phim
 
 
-sigma, rho, kappa, kappanr, SH, SM, HM, spec, costtxS, costtxU, cdx, ndxtx  = setparameters(0)
-beta, theta, phim, y0 = getfit( target_inc, target_hiv, target_mdr, sigma, rho, kappa, kappanr, SH, SM, HM, spec )
-print phim
+# sigma, rho, kappa, kappanr, SH, SM, HM, spec, costtxS, costtxU, cdx, ndxtx  = setparameters(0)
+# beta, theta, phim, y0 = getfit( target_inc, target_hiv, target_mdr, sigma, rho, kappa, kappanr, SH, SM, HM, spec )
+
 
     
-tz = np.arange(0,50,.05)
-y = odeint(func=Xflow,y0=y0,t=tz,args = (beta,theta,phim,sigma, rho, kappa, kappanr, SH, SM, HM, spec))
+# tz = np.arange(0,50,.05)
+# y = odeint(func=Xflow,y0=y0,t=tz,args = (beta,theta,phim,sigma, rho, kappa, kappanr, SH, SM, HM, spec))
 
-Nz, incnewz, incretxz, incinhnewz, incinhretxz, incmdrnewz, incmdrretxz, inctbhivz, TBmortz, TBprevz, HIVprevz, costz = extractdata(y,beta,theta,phim, sigma, kappa, costtxS, costtxU, cdx, ndxtx)
+# Nz, incnewz, incretxz, incinhnewz, incinhretxz, incmdrnewz, incmdrretxz, inctbhivz, TBmortz, TBprevz, HIVprevz, costz = extractdata(y,beta,theta,phim, sigma, kappa, costtxS, costtxU, cdx, ndxtx)
 
 
 
-# plot
-plt.close('all')
-plt.plot(tz,1e5*(incretxz+incnewz) ,label='TB inc tot')
-plt.plot(tz,1e3*incmdrnewz / (incnewz),label='TB inc MDR new * 10/%')
-plt.plot(tz,1e3*HIVprevz,label='HIV prev*10/%')
-plt.xlabel('time')
-plt.legend(loc=0)
-plt.show()
+# # plot
+# plt.close('all')
+# plt.plot(tz,1e5*(incretxz+incnewz) ,label='TB inc tot')
+# plt.plot(tz,1e3*incmdrnewz / (incnewz),label='TB inc MDR new * 10/%')
+# plt.plot(tz,1e3*HIVprevz,label='HIV prev*10/%')
+# plt.xlabel('time')
+# plt.legend(loc=0)
+# plt.show()
 
 
 # plt.close('all')
@@ -697,7 +683,7 @@ def runmodel( target_inc, target_hiv, target_mdr, cost, int_select ):
     print "Cost by end Year 1: $", np.around( c1 )
     print "Cost by end Year 5: $", np.around( c5 )
     print " "
-    # i1 = [i for i in range(len(time_range)) if time_range[i]==1.0][0] # surely better way?
+    # i1 = [i for i in range(len(time_range)) if time_range[i]==1.0][0] # surely better way? todo
     # i5 = [i for i in range(len(time_range)) if time_range[i]==5.0][0] 
     #evalcost(y[i1,:],sigma, kappa, costtxS, costtxU, cdx, ndxtx)
     #evalcost(y[i5,:],sigma, kappa, costtxS, costtxU, cdx, ndxtx)
@@ -790,7 +776,7 @@ def runmodel( target_inc, target_hiv, target_mdr, cost, int_select ):
             impactarray[abc*14+11] = 0#sum(costvect2[:])/100
             impactarray[abc*14+12] = 0#sum(costvect3[:])/100
             impactarray[abc*14+13] = 0#sum(incvect3[:])/100
-
+        # todo - reinstate these and file-saving
         
 
     if int_select == 9:
@@ -1024,6 +1010,7 @@ if __name__ == '__main__':
 
 
     # text redirect box
+    # todo: recheck these
     intxt = 'Welcome to FlexDx-TB v0.2!\n\
     Output will appear in this box.\n\
     Intervention options:\n\
